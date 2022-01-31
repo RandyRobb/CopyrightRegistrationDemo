@@ -1,0 +1,24 @@
+{
+  "attestations": {
+    "idTokens": [
+      {
+        "id": "https://self-issued.me",
+        "mapping": {
+          "firstName": { "claim": "$.given_name" },
+          "lastName": { "claim": "$.family_name" },
+		      "imageFile": { "claim": "$.image_file" },
+          "id": { "claim": "$.id" },
+          "name": { "claim": "$.name" }
+        },
+
+        "configuration": "https://self-issued.me",
+        "client_id": "",
+        "redirect_uri": ""
+      }
+    ]
+  },
+  "validityInterval": 2592001,
+  "vc": {
+    "type": [ "RegisteredCopyright" ]
+  }
+}

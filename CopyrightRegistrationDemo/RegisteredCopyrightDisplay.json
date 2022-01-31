@@ -1,0 +1,42 @@
+{
+  "default": {
+    "locale": "en-US",
+    "card": {
+      "title": "Registered Copyright Owner",
+      "issuedBy": "CopyrightProcessor",
+      "backgroundColor": "#000000",
+      "textColor": "#ffffff",
+      "logo": {
+        "uri": "https://didcustomerplayground.blob.core.windows.net/public/VerifiedCredentialExpert_icon.png",
+        "description": "Copyright Registry Credential"
+      },
+      "description": "This certifies that copyrightOwner is the owner of this copyrighted image"
+    },
+    "consent": {
+      "title": "Do you want to get your Verified Credential?",
+      "instructions": "Sign in with your account to get your card."
+    },
+    "claims": {
+      "vc.credentialSubject.id": {
+        "type": "String",
+        "label": "Copyright Owner ID"
+      },
+      "vc.credentialSubject.name": {
+        "type": "String",
+        "label": "Name"
+      },
+      "vc.credentialSubject.firstName": {
+        "type": "String",
+        "label": "First name"
+      },
+      "vc.credentialSubject.lastName": {
+        "type": "String",
+        "label": "Last name"
+      },
+	  "vc.credentialSubject.imageFile": {
+        "type": "String",
+        "label": "Image File Link"
+      }
+    }
+  }
+}

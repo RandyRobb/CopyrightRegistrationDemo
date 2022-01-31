@@ -1,0 +1,260 @@
+﻿@page "/registercopyright"
+@inject NavigationManager NavigationManager
+@using CopyrightRegistrationDemo.Models
+@using CopyrightRegistrationDemo.Services
+@using System.IO
+@using Newtonsoft.Json;
+@using Microsoft.Extensions.Logging
+@using Microsoft.Extensions.Configuration
+@using Azure.Storage.Blobs
+@using Azure.Storage.Blobs.Models
+@using System.Security.Cryptography
+@using Microsoft.AspNetCore.Components.Authorization
+@using System.Security.Claims
+@using System.Text
+@using System.Timers
+@using Microsoft.Extensions.Caching.Memory
+@inject AuthenticationStateProvider AuthenticationStateProvider
+@inject ILogger<Registercopyright> Logger
+@inject IWebHostEnvironment Environment
+@inject IConfiguration Configuration
+@inject ModernAuthService ModernAuthService
+@inject VCService VCService
+@inject IConfiguration appSettings
+@inject NavigationManager MyNavigationManager
+@inject IMemoryCache memoryCache
+
+<h3>Copyright Demo</h3>
+@if (loadedFile == null)
+{
+    <h4>Upload Image File for Copyright Verification</h4>
+    <InputFile OnChange="@LoadFile" />
+    <div style="white-space:pre-wrap;">
+        <h6>
+        Select an image file for Copyright Verification (jpg,png, etc)
+        Once verified you will receive a QR code to certify Copyright Ownership
+        </h6>
+    </div>
+}
+@if(qrcode != null && (myMem.status != "request_retrieved") && (myMem.status != "issuance_successful"))
+{
+    <div>
+        <img width="250" height="250" src=@qrcode>
+    </div>
+    <div>
+        <p> 
+        @pinValue
+        </p>
+        <p>
+        @myMem.status
+        </p>
+        <p>
+        @myMem.message
+        </p>
+
+   </div>
+}
+@if(myMem.status == "request_retrieved")
+{
+    <div>
+        <p> 
+        @pinValue
+        </p>
+        <p>
+        @myMem.status
+        </p>
+        <p>
+        @myMem.message
+        </p>
+   </div>
+}
+@if(myMem.status == "issuance_successful")
+{
+    <div>
+        <p>
+        @myMem.status
+        </p>
+        <p>
+        @myMem.message
+        </p>
+
+   </div>
+}
+
+
+
+@code {
+    private string FolderName { get; set; }
+
+    private List<string> myPolicyIds = new List<string>();
+
+
+
+    //public ConfigInfo myConfig;
+
+    public Boolean tenantSelected = false;
+
+    private IBrowserFile loadedFile;
+    private long maxFileSize = 5120000;
+    private int maxAllowedFiles = 3;
+    private bool isLoading;
+
+    public string qrcode;
+    public string pinValue;
+    public string apikey;
+    public string myState;
+    public string cacheValue;
+    public memcache myMem = new memcache(); 
+
+
+
+    private async Task StartChecking()
+    {
+        Timer timer = new Timer();
+        timer.Interval = 1000;
+        
+        timer.Elapsed += async (s, e) => 
+            { 
+                memoryCache.TryGetValue(@myState,out cacheValue);
+                myMem = JsonConvert.DeserializeObject<memcache>(cacheValue);
+                await InvokeAsync(StateHasChanged); 
+            };
+        timer.Start();
+    }
+
+
+
+    private async Task LoadFile(InputFileChangeEventArgs e)
+    {
+        isLoading = true;
+        loadedFile = e.File;
+        
+
+        try
+        {
+
+
+
+
+
+            var authState = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+            var thisUser = authState.User;
+
+            //IEnumerable<Claim> myClaims = Enumerable.Empty<Claim>();
+            //myClaims = thisUser.Claims;
+            user vcUser = new user();
+            vcUser.firstName = thisUser.FindFirst(c => c.Type == ClaimTypes.GivenName)?.Value;
+            vcUser.lastName = thisUser.FindFirst(c => c.Type == ClaimTypes.Surname)?.Value;
+            vcUser.displayName = thisUser.Identity.Name;
+            vcUser.id = thisUser.FindFirst(c => c.Type == ClaimTypes.NameIdentifier)?.Value;
+
+
+
+            string[] fileparts = e.File.Name.Split('.');
+            var filePrefix = fileparts[0] + string.Format("{0:D5}", RandomNumberGenerator.GetInt32(1, 99999)) + ".";
+            var trustedFilename = filePrefix + fileparts[1];
+            var infoFilename = filePrefix + ".json"; 
+
+
+            string connectionString = Configuration.GetValue<string>("BlobConnectionString");
+            BlobServiceClient blobServiceClient = new BlobServiceClient(connectionString);
+
+
+            //thisUser.firstName = context.User.Claims
+
+
+            BlobContainerClient containerClient = blobServiceClient.GetBlobContainerClient("images");
+            await containerClient.UploadBlobAsync(trustedFilename, loadedFile.OpenReadStream(maxFileSize));
+
+            //Here is where the copyrighter would do its work to verify the image is copyrightable. Then is will uplaod the file to a public repository
+            BlobClient blobClient = containerClient.GetBlobClient(trustedFilename);
+            BlobDownloadStreamingResult confirmedFile = blobClient.DownloadStreaming();
+            BlobContainerClient publicContainerClient = blobServiceClient.GetBlobContainerClient("public-images");
+            await publicContainerClient.UploadBlobAsync(trustedFilename,confirmedFile.Content);
+            vcUser.imageurl = "https://ocgvcfiles.blob.core.windows.net/public-images/" + trustedFilename;
+
+            BlobContainerClient infoContainerClient = blobServiceClient.GetBlobContainerClient("image-info");
+            string userinfo = JsonConvert.SerializeObject(vcUser);
+            var content = Encoding.UTF8.GetBytes(userinfo);
+            using(var ms = new MemoryStream(content)) await infoContainerClient.UploadBlobAsync( infoFilename,ms);
+
+            //Issue Verification
+            IssueVC(vcUser);
+            
+
+
+
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError("File: {Filename} Error: {Error}", 
+                loadedFile.Name, ex.Message);
+        }
+    }
+
+    public async Task IssueVC(user myUser)
+    {
+        //Configure Payload
+        VCPayload myPayload = new VCPayload();
+        Callback callback = new Callback();
+        Issuance issuance = new Issuance();
+        Pin pin = new Pin();
+        Registration registration = new Registration();
+        Claims claims = new Claims();
+        Headers headers = new Headers();
+
+        myPayload.authority = appSettings["AppSettings:IssuerAuthority"];
+        myPayload.includeQRCode = true;
+        string thisURL = MyNavigationManager.BaseUri;
+        if(thisURL.Contains("localhost"))
+        {
+            callback.url = "https://eng7as3x8qtmb.x.pipedream.net";
+        }
+        else
+        {
+            callback.url = MyNavigationManager.BaseUri + "api/issuer/issuancecallback";
+        }
+        
+        //Set state value
+        callback.state=Guid.NewGuid().ToString();
+        myState = callback.state;
+        //callback.state = "e2e68f1b-487d-4f99-bf50-5aa76e1882d5";
+        headers.ApiKey = System.Environment.GetEnvironmentVariable("API-KEY");
+        apikey = headers.ApiKey;
+        //headers.ApiKey = "f71e0fb8-dbb3-4881-a6c3-253ffc957408";
+        callback.headers = headers;
+        myPayload.callback = callback;
+        issuance.type = "RegisteredCopyright";
+        issuance.manifest = appSettings["AppSettings:CredentialManifest"];
+        claims.family_name = myUser.lastName;
+        claims.given_name = myUser.firstName;
+        claims.image_file = myUser.imageurl;
+        claims.id = myUser.id;
+        claims.name = myUser.displayName;
+        issuance.claims = claims;
+        //Create a random pin of 4 characters
+        pin.length = 4;
+        pin.value = string.Format("{0:D4}", RandomNumberGenerator.GetInt32(1, 9999));
+        pinValue = pin.value;
+
+        //pin.value = "4506";
+
+        issuance.pin = pin;
+        myPayload.issuance = issuance;
+        registration.clientName = "Registered Copyright Owner Demo";
+        myPayload.registration = registration;
+
+        string payload = JsonConvert.SerializeObject(myPayload);
+
+        //Get token
+        authtoken token = await ModernAuthService.GetAccessTokenByCC();
+        string myResonse = await VCService.PostPayloadAsync(token.access_token, myPayload);
+        VCResponse jsonResponse = JsonConvert.DeserializeObject<VCResponse>(myResonse);
+        qrcode = jsonResponse.qrCode;
+        await InvokeAsync(StateHasChanged);
+        StartChecking();
+    }
+
+    
+
+}

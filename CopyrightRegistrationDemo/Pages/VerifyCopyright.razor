@@ -1,0 +1,177 @@
+﻿@page "/verifycopyright"
+@inject NavigationManager NavigationManager
+@using CopyrightRegistrationDemo.Models
+@using CopyrightRegistrationDemo.Services
+@using System.IO
+@using Newtonsoft.Json;
+@using Microsoft.Extensions.Logging
+@using Microsoft.Extensions.Configuration
+@using Azure.Storage.Blobs
+@using Azure.Storage.Blobs.Models
+@using System.Security.Cryptography
+@using Microsoft.AspNetCore.Components.Authorization
+@using System.Security.Claims
+@using System.Text
+@using System.Timers
+@using Microsoft.Extensions.Caching.Memory
+@inject AuthenticationStateProvider AuthenticationStateProvider
+@inject ILogger<Registercopyright> Logger
+@inject IWebHostEnvironment Environment
+@inject IConfiguration Configuration
+@inject ModernAuthService ModernAuthService
+@inject VCService VCService
+@inject IConfiguration appSettings
+@inject NavigationManager MyNavigationManager
+@inject IMemoryCache memoryCache
+
+<h3>Copyright Demo</h3>
+
+<h4>Copyright Credential Verification</h4>
+@if (qrcode == null)
+{
+    <div>
+        <button type="button" id="testPolicy" @onclick="VerifyVC">Verify Copyright Credential</button><br />
+    </div>
+}
+@if(qrcode != null && (myMem.status != "request_retrieved") && (myMem.status != "presentation_verified"))
+{
+    <div>
+        <img width="250" height="250" src=@qrcode>
+    </div>
+    <div>
+        <p>
+        @myMem.status
+        </p>
+        <p>
+        @myMem.message
+        </p>
+
+   </div>
+}
+@if(myMem.status == "request_retrieved")
+{
+    <div>
+        <p>
+        @myMem.status
+        </p>
+        <p>
+        @myMem.message
+        </p>
+
+   </div>
+}
+@if(myMem.status == "presentation_verified")
+{
+    <div>
+        <p>
+        @myMem.status
+        </p>
+        <p>
+        @myMem.message
+        </p>
+
+   </div>
+}
+
+
+
+@code {
+    
+
+
+
+    //public ConfigInfo myConfig;
+
+    public Boolean tenantSelected = false;
+
+    private IBrowserFile loadedFile;
+    private IBrowserFile loadedfile2;
+    private long maxFileSize = 1024 * 15;
+    private int maxAllowedFiles = 3;
+    private bool isLoading;
+
+    public string qrcode;
+    public string apikey;
+    public string myState;
+    public string cacheValue;
+    public memcache myMem = new memcache(); 
+
+
+
+    private async Task StartChecking()
+    {
+        Timer timer = new Timer();
+        timer.Interval = 1000;
+        
+        timer.Elapsed += async (s, e) => 
+            { 
+                memoryCache.TryGetValue(@myState,out cacheValue);
+                myMem = JsonConvert.DeserializeObject<memcache>(cacheValue);
+                await InvokeAsync(StateHasChanged); 
+            };
+        timer.Start();
+    }
+
+
+
+
+
+    public async Task VerifyVC()
+    {
+             //Configure Presentation Payload
+            VCVPayload myPayload = new VCVPayload();
+            Callback callback = new Callback();
+            Presentation presentation = new Presentation();
+            Registration registration = new Registration();
+            List<RequestedCredential> myRCs = new List<RequestedCredential>();
+            RequestedCredential myRC = new RequestedCredential();
+            Headers headers = new Headers();
+
+            myPayload.authority = appSettings["AppSettings:IssuerAuthority"];
+            myPayload.includeQRCode = true;
+            string thisURL = MyNavigationManager.BaseUri;
+            if(thisURL.Contains("localhost"))
+            {
+                callback.url = "https://eng7as3x8qtmb.x.pipedream.net";
+            }
+            else
+            {
+                callback.url = MyNavigationManager.BaseUri + "api/verifier/presentationcallback";
+            }
+            //Set state value
+            callback.state = Guid.NewGuid().ToString();
+            myState = callback.state;
+            //callback.state = "e2e68f1b-487d-4f99-bf50-5aa76e1882d5";
+            headers.ApiKey = System.Environment.GetEnvironmentVariable("API-KEY");
+            apikey = headers.ApiKey;
+            //headers.ApiKey = "f71e0fb8-dbb3-4881-a6c3-253ffc957408";
+            callback.headers = headers;
+            myPayload.callback = callback;
+            myRC.type = "RegisteredCopyright";
+            myRC.purpose = "Verify Copyright Owner";
+            List<string> myAcceptedIssuers = new List<string>();
+            myAcceptedIssuers.Add(appSettings["AppSettings:IssuerAuthority"]);
+            myRC.acceptedIssuers = myAcceptedIssuers;
+            myRCs.Add(myRC);
+            presentation.includeReceipt = false;
+            presentation.requestedCredentials = myRCs;
+            myPayload.presentation = presentation;
+            myPayload.registration = registration;
+            registration.clientName = "Registered Copyright Owner Demo";
+
+            myPayload.registration = registration;
+
+            string payload = JsonConvert.SerializeObject(myPayload);
+
+        //Get token
+        authtoken token = await ModernAuthService.GetAccessTokenByCC();
+        string myResponse = await VCService.PostVPayloadAsync(token.access_token, myPayload);
+        VCResponse jsonResponse = JsonConvert.DeserializeObject<VCResponse>(myResponse);
+        qrcode = jsonResponse.qrCode;
+        await InvokeAsync(StateHasChanged);
+        StartChecking();
+    }
+
+
+
+}
